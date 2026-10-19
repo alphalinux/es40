@@ -1525,9 +1525,12 @@ int CDisk::do_scsi_command()
 			state.scsi.dati.data[2] = (return_length >> 8);
 			state.scsi.dati.data[3] = (return_length & 0xFF);
 
-			/* Bochs used this because of ReactOS boot problems, but this should be in fact correct. */
+			// Return no more than the initiator asked for.
 			state.scsi.dati.available = return_length + 4;
+			if (state.scsi.dati.available > alloc_length)
+				state.scsi.dati.available = alloc_length;
 			state.scsi.dati.read = 0;
+			do_scsi_error(SCSI_OK);
 		}
 		else
 		{
