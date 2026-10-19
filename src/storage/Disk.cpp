@@ -236,8 +236,10 @@ void CDisk::scsi_select_me(int bus)
 	state.scsi.cmd.written = 0;
 	state.scsi.dati.available = 0;
 	state.scsi.dati.read = 0;
+	state.scsi.dati.blocks_left = 0;
 	state.scsi.dato.expected = 0;
 	state.scsi.dato.written = 0;
+	state.scsi.dato.blocks_left = 0;
 	state.scsi.stat.available = 0;
 	state.scsi.stat.read = 0;
 	state.scsi.lun_selected = false;
@@ -506,6 +508,19 @@ void CDisk::scsi_xfer_done_me(int bus)
 		if (state.scsi.dato.written < state.scsi.dato.expected)
 			break;
 
+		// A WRITE is written a buffer at a time.
+		if (state.scsi.dato.blocks_left)
+		{
+			if (write_chunk() && state.scsi.dato.blocks_left)
+			{
+				start_write_chunk();
+				break;
+			}
+
+			newphase = SCSI_PHASE_STATUS;
+			break;
+		}
+
 		res = do_scsi_command();
 		if (res == 2)
 			FAILURE(IllegalState, "do_command returned 2 after DATA OUT phase");
@@ -518,6 +533,10 @@ void CDisk::scsi_xfer_done_me(int bus)
 
 	case SCSI_PHASE_DATA_IN:
 		if (state.scsi.dati.read < state.scsi.dati.available)
+			break;
+
+		// Refill the buffer with the rest of a large READ.
+		if (state.scsi.dati.blocks_left && read_next_chunk())
 			break;
 
 		newphase = SCSI_PHASE_STATUS;
@@ -1053,6 +1072,95 @@ int CDisk::mode_sense_page(int page, bool changeable, int q)
 }
 
 /**
+ * \brief Read the next part of a READ command into the Data In buffer.
+ *
+ * A READ may ask for more data than the buffer holds; the rest is read
+ * as the initiator empties the buffer. On a read error, the command
+ * ends with CHECK CONDITION, and false is returned.
+ **/
+bool CDisk::read_next_chunk()
+{
+	u32 blocks = DATI_BUFSZ / get_block_size();
+
+	if (blocks > state.scsi.dati.blocks_left)
+		blocks = state.scsi.dati.blocks_left;
+
+	state.scsi.dati.read = 0;
+	state.scsi.dati.available = 0;
+	try
+	{
+		if (!seek_block(state.scsi.dati.next_lba) ||
+			read_blocks(state.scsi.dati.data, blocks) != blocks)
+		{
+			state.scsi.dati.blocks_left = 0;
+			do_scsi_error(SCSI_HARDWARE_ERROR);
+			return false;
+		}
+	}
+	catch (const CIOException& error)
+	{
+		printf("%s: Read failed: %s\n", devid_string, error.message().c_str());
+		state.scsi.dati.blocks_left = 0;
+		do_scsi_error(SCSI_HARDWARE_ERROR);
+		return false;
+	}
+
+	state.scsi.dati.next_lba += blocks;
+	state.scsi.dati.blocks_left -= blocks;
+	state.scsi.dati.available = blocks * get_block_size();
+	return true;
+}
+
+/**
+ * \brief Set up the Data Out buffer for the next part of a WRITE command.
+ **/
+void CDisk::start_write_chunk()
+{
+	u32 blocks = DATO_BUFSZ / get_block_size();
+
+	if (blocks > state.scsi.dato.blocks_left)
+		blocks = state.scsi.dato.blocks_left;
+
+	state.scsi.dato.written = 0;
+	state.scsi.dato.expected = blocks * get_block_size();
+}
+
+/**
+ * \brief Write the Data Out buffer of a WRITE command to the media.
+ *
+ * Sets the status for the command when it is done or fails. Returns
+ * false on a write error.
+ **/
+bool CDisk::write_chunk()
+{
+	u32 blocks = state.scsi.dato.expected / get_block_size();
+
+	try
+	{
+		if (!seek_block(state.scsi.dato.next_lba) ||
+			write_blocks(state.scsi.dato.data, blocks) != blocks)
+		{
+			state.scsi.dato.blocks_left = 0;
+			do_scsi_error(SCSI_HARDWARE_ERROR);
+			return false;
+		}
+	}
+	catch (const CIOException& error)
+	{
+		printf("%s: Write failed: %s\n", devid_string, error.message().c_str());
+		state.scsi.dato.blocks_left = 0;
+		do_scsi_error(SCSI_HARDWARE_ERROR);
+		return false;
+	}
+
+	state.scsi.dato.next_lba += blocks;
+	state.scsi.dato.blocks_left -= blocks;
+	if (!state.scsi.dato.blocks_left)
+		do_scsi_error(SCSI_OK);
+	return true;
+}
+
+/**
  * \brief Handle a SCSI command.
  *
  * Called when a SCSI command has been received. We parse
@@ -1062,7 +1170,8 @@ int CDisk::mode_sense_page(int page, bool changeable, int q)
  * If a data out phase is required, we return the value 2
  * to indicate this. In that case, do_scsi_command will be
  * called again once the data out has been received from
- * the initiator.
+ * the initiator. WRITE commands are the exception: their
+ * data is written by write_chunk as it arrives.
  **/
 int CDisk::do_scsi_command()
 {
@@ -1079,6 +1188,9 @@ int CDisk::do_scsi_command()
 #endif
 	if (state.scsi.cmd.written < 1)
 		return 0;
+
+	state.scsi.dati.blocks_left = 0;
+	state.scsi.dato.blocks_left = 0;
 
 	/* INQUIRY and REQUEST SENSE do not consume a pending reset notification. */
 	if ((state.scsi.media_changed == SCSI_MEDIA_STATE_RESET ||
@@ -2299,37 +2411,17 @@ int CDisk::do_scsi_command()
 			break;
 		}
 
-		// Would exceed buffer?
-		if (retlen > DATI_BUFSZ / get_block_size())
-		{
-			printf("%s: read too big (%d)\n", devid_string, retlen);
-			do_scsi_error(SCSI_TOO_BIG);
-			break;
-		}
-
-		//  Return data:
-		state.scsi.dati.read = 0;
-		state.scsi.dati.available = 0;
-		try
-		{
-			if (retlen && (!seek_block(ofs) ||
-				read_blocks(state.scsi.dati.data, retlen) != retlen))
-			{
-				do_scsi_error(SCSI_HARDWARE_ERROR);
-				break;
-			}
-		}
-		catch (const CIOException& error)
-		{
-			printf("%s: Read failed: %s\n", devid_string, error.message().c_str());
-			do_scsi_error(SCSI_HARDWARE_ERROR);
-			break;
-		}
-		state.scsi.dati.available = retlen * get_block_size();
-
+		//  Return data, a buffer at a time if it does not fit:
 #if defined(DEBUG_SCSI)
 		printf("%s: READ  ofs=%d size=%d\n", devid_string, ofs, retlen);
 #endif
+		state.scsi.dati.read = 0;
+		state.scsi.dati.available = 0;
+		state.scsi.dati.next_lba = ofs;
+		state.scsi.dati.blocks_left = retlen;
+		if (retlen && !read_next_chunk())
+			break;
+
 		do_scsi_error(SCSI_OK);
 		break;
 
@@ -2463,41 +2555,20 @@ int CDisk::do_scsi_command()
 			break;
 		}
 
-		// Would exceed buffer?
-		if (retlen > DATO_BUFSZ / get_block_size())
-		{
-			printf("%s: write too big (%u blocks)\n", devid_string, retlen);
-			do_scsi_error(SCSI_TOO_BIG);
-			break;
-		}
-
-		state.scsi.dato.expected = retlen * get_block_size();
-
-		if (state.scsi.dato.written < state.scsi.dato.expected)
-			return 2;
-
-		//  Write data
-		try
-		{
-			if (retlen && (!seek_block(ofs) ||
-				write_blocks(state.scsi.dato.data, retlen) != retlen))
-			{
-				do_scsi_error(SCSI_HARDWARE_ERROR);
-				break;
-			}
-		}
-		catch (const CIOException& error)
-		{
-			printf("%s: Write failed: %s\n", devid_string, error.message().c_str());
-			do_scsi_error(SCSI_HARDWARE_ERROR);
-			break;
-		}
-
 #if defined(DEBUG_SCSI)
 		printf("%s: WRITE  ofs=%d size=%d\n", devid_string, ofs, retlen);
 #endif
-		do_scsi_error(SCSI_OK);
-		break;
+		if (retlen == 0)
+		{
+			do_scsi_error(SCSI_OK);
+			break;
+		}
+
+		//  Take the data a buffer at a time; scsi_xfer_done_me writes it.
+		state.scsi.dato.next_lba = ofs;
+		state.scsi.dato.blocks_left = retlen;
+		start_write_chunk();
+		return 2;
 
 	case SCSICMD_SYNCHRONIZE_CACHE:
 #if defined(DEBUG_SCSI)

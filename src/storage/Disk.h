@@ -110,6 +110,9 @@ public:
   void            set_atapi_mode() { atapi_mode = true; };
 
   int             do_scsi_command();
+  bool            read_next_chunk();
+  void            start_write_chunk();
+  bool            write_chunk();
   int             mode_sense_page(int page, bool changeable, int q);
   int             do_scsi_message();
   void            do_scsi_error(int errcode, int info = 0);
@@ -227,6 +230,8 @@ protected:
         u8            data[DATI_BUFSZ]; /**< Data buffer. **/
         unsigned int  available;        /**< Number of bytes available to read. **/
         unsigned int  read; /**< Number of bytes read so far. **/
+        u32           next_lba;         /**< Next block of a READ larger than the buffer. **/
+        u32           blocks_left;      /**< Blocks of that READ not yet in the buffer. **/
       } dati;
 
       /// State for Data Out phase (controller -> disk)
@@ -235,6 +240,8 @@ protected:
         u8            data[DATO_BUFSZ]; /**< Data buffer. **/
         unsigned int  expected;         /**< Number of bytes the initiator is expected to write. **/
         unsigned int  written;          /**< Number of bytes written sofar. **/
+        u32           next_lba;         /**< Next block of a WRITE. **/
+        u32           blocks_left;      /**< Blocks of that WRITE not yet written. **/
       } dato;
 
       /// State for Status phase (disk -> controller)
