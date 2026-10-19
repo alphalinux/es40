@@ -2517,19 +2517,48 @@ int CDisk::do_scsi_command()
             do_scsi_error(SCSI_MEDIA_REMOVED);
             break;
         }
-        // We support format field == 0 only (standard TOC).
-        if (state.scsi.cmd.data[2] & 0x0f)
-        {
-            FAILURE_2(NotImplemented,
-                "%s: I don't understand READ TOC/PMA/ATIP with format %01x.\n",
-                devid_string, state.scsi.cmd.data[2] & 0x0f);
-        }
+        // MMC puts the format in byte 2; SCSI-2 drives took a request
+        // for session information from the top bits of the control byte.
+        int format = state.scsi.cmd.data[2] & 0x0f;
+        if (!format && (state.scsi.cmd.data[9] >> 6) == 1)
+            format = 1;
 
         const bool msf_flag       = (state.scsi.cmd.data[1] & 0x02) != 0;
         const u8   start_track_req = state.scsi.cmd.data[6];
 
         retlen = (unsigned int)state.scsi.cmd.data[7] * 256
                + state.scsi.cmd.data[8];
+
+        if (format == 1)
+        {
+            // Session information: one session, starting with track 1
+            // at the start of the media.
+            u8 info[12] = { 0, 10, 1, 1, 0, 0x14, 1, 0, 0, 0, 0, 0 };
+
+            if (msf_flag)
+            {
+                u32 x = lba2msf(0);
+                info[9] = (x >> 16) & 0xff;
+                info[10] = (x >> 8) & 0xff;
+                info[11] = x & 0xff;
+            }
+
+            if (retlen > sizeof(info))
+                retlen = sizeof(info);
+            memcpy(state.scsi.dati.data, info, retlen);
+            state.scsi.dati.available = retlen;
+            state.scsi.dati.read = 0;
+            do_scsi_error(SCSI_OK);
+            break;
+        }
+
+        // We support format field == 0 (standard TOC) otherwise.
+        if (format)
+        {
+            FAILURE_2(NotImplemented,
+                "%s: I don't understand READ TOC/PMA/ATIP with format %01x.\n",
+                devid_string, format);
+        }
 
         state.scsi.dati.available = retlen;
         state.scsi.dati.read      = 0;
