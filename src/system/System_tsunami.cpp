@@ -240,6 +240,11 @@ void CSystem::pio_write(u64 a, int dsize, u64 data, CSystemComponent* source)
 
 		// Unused PCI memory space
 		u64 paddr = a & U64(0xffffffff);
+		if (pcf8584 && dsize == 8 && CPCF8584::claims(paddr))
+		{
+			pcf8584->write(paddr, (u8)data);
+			return;
+		}
 		if (paddr > 0xb8fff || paddr < 0xb8000)
 		{ // skip legacy video
 #ifdef DEBUG_UNKMEM
@@ -468,6 +473,8 @@ u64 CSystem::pio_read(u64 a, int dsize, CSystemComponent* source)
 
 		// Unused PCI memory space — return all-ones (PCI master abort)
 		u64 paddr = a & U64(0xffffffff);
+		if (pcf8584 && dsize == 8 && CPCF8584::claims(paddr))
+			return pcf8584->read(paddr);
 		if (paddr > 0xb8fff || paddr < 0xb8000)
 		{ // skip legacy video
 #ifdef DEBUG_UNKMEM

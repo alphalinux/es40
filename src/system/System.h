@@ -147,6 +147,7 @@
 #include "emu/SystemComponent.h"
 #include "CPU/TraceEngine.h"
 #include "i2c_spd.h"
+#include "PCF8584.h"
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -635,6 +636,8 @@ private:
   bool graphics_multihead = false;
   // Decode diagnostic policy
   bool stop_on_decode_conflict = false;
+  // API UP2000 I2C controller in otherwise unused PCI 0 memory
+  std::unique_ptr<CPCF8584> pcf8584;
   // Emulator continuation for a shared read whose claimants disagree.
   // Not PCI spec, it's undefined there. 
   enum class SharedReadPolicy { Stop, Claimant, And, Or };

@@ -387,6 +387,8 @@ CSystem::CSystem(CConfigurator* cfg)
 		FAILURE(Configuration, "More than one system");
 	graphics_multihead = cfg->get_bool_value("graphics.multihead", false);
 	stop_on_decode_conflict = cfg->get_bool_value("debug.stop_on_decode_conflict", false);
+	if (cfg->get_bool_value("iic.pcf8584", false))
+		pcf8584 = std::make_unique<CPCF8584>();
 	const std::string read_policy = cfg->get_text_value("debug.shared_read_policy", "stop");
 	if (read_policy == "claimant")
 	{
