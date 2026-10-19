@@ -1312,6 +1312,34 @@ void CSystem::dchip_csr_write(u32 a, u8 data)
 }
 
 /**
+ * Cchip interrupt input (DRIR bit) that a PCI INTx pin is wired to, or -1
+ * if the slot has no interrupt.  intx is 0 for INTA to 3 for INTD.
+ *
+ * ES40: the slot-based pattern SRM programs at first pass,
+ *   ((slot + 1) * 4 + bus * 0x10 + intx) & 0x3f.
+ * API UP2000 (the DP264 layout): Adaptec SCSI in slot 6 of PCI 0 on bits
+ * 19 and 18, PCI 0 option slots 7-9 from bit 31 down, and PCI 1 option
+ * slots 7-10 from bit 47 down, four bits per slot.
+ **/
+int CSystem::pci_irq_drir_bit(int bus, int slot, int intx) const noexcept
+{
+	switch (pci_irq_wiring)
+	{
+	case PciIrqWiring::UP2000:
+		if (bus == 0 && slot == 6)
+			return intx < 2 ? 19 - intx : -1;
+		if (bus == 0 && slot >= 7 && slot <= 9)
+			return 31 - (slot - 7) * 4 - intx;
+		if (bus == 1 && slot >= 7 && slot <= 10)
+			return 47 - (slot - 7) * 4 - intx;
+		return -1;
+	case PciIrqWiring::ES40:
+	default:
+		return ((slot + 1) * 4 + (bus & 0x3) * 0x10 + intx) & 0x3f;
+	}
+}
+
+/**
  * \brief Assert or deassert one of 64 possible interrupt lines on the Tsunami chipset.
  *
  * Source: HRM, 6.3:

@@ -387,6 +387,11 @@ CSystem::CSystem(CConfigurator* cfg)
 		FAILURE(Configuration, "More than one system");
 	graphics_multihead = cfg->get_bool_value("graphics.multihead", false);
 	stop_on_decode_conflict = cfg->get_bool_value("debug.stop_on_decode_conflict", false);
+	const std::string irq_wiring = cfg->get_text_value("pci.irq_wiring", "es40");
+	if (irq_wiring == "up2000")
+		pci_irq_wiring = PciIrqWiring::UP2000;
+	else if (irq_wiring != "es40")
+		FAILURE(Configuration, "pci.irq_wiring must be es40 or up2000");
 	if (cfg->get_bool_value("iic.pcf8584", false))
 		pcf8584 = std::make_unique<CPCF8584>();
 	const std::string read_policy = cfg->get_text_value("debug.shared_read_policy", "stop");

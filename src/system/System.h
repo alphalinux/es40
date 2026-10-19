@@ -280,6 +280,7 @@ public:
 
   bool has_vga_device(const CVGA* exclude = nullptr) const noexcept;
   bool graphics_multihead_enabled() const noexcept { return graphics_multihead; }
+  int pci_irq_drir_bit(int bus, int slot, int intx) const noexcept;
   // Unambiguous fallback for missing firmware metadata; null for zero/many.
   const CVGA* get_sole_vga_device() const noexcept;
 
@@ -636,6 +637,8 @@ private:
   bool graphics_multihead = false;
   // Decode diagnostic policy
   bool stop_on_decode_conflict = false;
+  // How PCI INTx pins are wired to the Cchip interrupt inputs
+  enum class PciIrqWiring { ES40, UP2000 } pci_irq_wiring = PciIrqWiring::ES40;
   // API UP2000 I2C controller in otherwise unused PCI 0 memory
   std::unique_ptr<CPCF8584> pcf8584;
   // Emulator continuation for a shared read whose claimants disagree.
