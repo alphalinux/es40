@@ -412,7 +412,7 @@ u64 CSystem::pio_read(u64 a, int dsize, CSystemComponent* source)
 		}
 	}
 
-	if (a >= U64(0x800000c0000) && a < U64(0x801000e0000))
+	if (a >= U64(0x800000c0000) && a < U64(0x800000e0000))
 	{
 
 		// Unused PCI ROM BIOS space — return all-ones (PCI master abort)
